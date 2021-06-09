@@ -7,19 +7,20 @@
  */
 #include <SPI.h>
 #include <WiFiNINA.h>
-#include <dhtnew.h>
+#include <DHT.h>
 #include <PubSubClient.h>
 
 // Credentials
 #define WIFISSID ""
 #define WIFIPASS ""
-#define MqttClient_Id "Node2"
+#define MqttClient_Id "Node1"
 #define MqttClient_user ""
 #define MqttClient_password ""
 #define SERVER ""
 
 // Pins
-int humidData = 21;
+#define DHTPIN 14
+#define DHTTYPE DHT22
 const int sharpLEDPin = 19;   
 const int sharpVoPin = A6;  
 
@@ -39,24 +40,25 @@ void mqttReconnect();
 void mqttPublish(char* topic, float payload);
 
 // MQTT Topics
-#define MqttTopic_Humidity "environment/Node2/humidity"
-#define MqttTopic_Temperature "environment/Node2/temperature"
-#define MqttTopic_Dust "environment/Node2/dust"
+#define MqttTopic_Humidity "environment/Node1/humidity"
+#define MqttTopic_Temperature "environment/Node1/temperature"
+#define MqttTopic_Dust "environment/Node1/dust"
 
 // MQTT Initialisation
 WiFiClient wifi;
 PubSubClient client(wifi);
 
+DHT dht(DHTPIN, DHTTYPE);
+
 void setup() {
   pinMode(sharpLEDPin,OUTPUT);
   pinMode(sharpVoPin,INPUT);
-  pinMode(humidData,INPUT);
   
-  // Wifi connection for uploading sensor data to server
-
+  dht.begin();
   Serial.begin(9600);
   while (!Serial);
 
+  // Wifi connection for uploading sensor data to server
   int status = WL_IDLE_STATUS;
   while (status != WL_CONNECTED) {
     Serial.print("Connecting to ");
@@ -68,24 +70,31 @@ void setup() {
   Serial.println("Wifi connected.");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
+
+  // Establish MQTT connection to server
   client.setServer(SERVER,1883);
-  client.connect(MqttClient_Id, MqttClient_user, MqttClient_password);
+  while (!client.connected()) {
+    Serial.print("Connecting to MQTT server...");
+    client.connect(MqttClient_Id, MqttClient_user, MqttClient_password);
+  }
+  Serial.println("successful.");
 }
 
 void loop() {
   if (!client.connected()) {
     mqttReconnect();
   }
-  DHTNEW dht(humidData);
-  dht.read();
-  float temp = dht.getTemperature();
-  float humid = dht.getHumidity();
+  delay(2000);
+  float temp = dht.readTemperature();
+  delay(300);
+  float humid = dht.readHumidity();
+  delay(300);
   float dust = getDust();
   client.loop();
   mqttPublish(MqttTopic_Temperature, temp);
   mqttPublish(MqttTopic_Humidity, humid);
   mqttPublish(MqttTopic_Dust, dust);
-  delay(1000);
+  
 }
 
 float getDust() {
@@ -113,7 +122,6 @@ void mqttReconnect() {
     // Attempt to connect
     if (client.connect(MqttClient_Id, MqttClient_user, MqttClient_password)) {
       Serial.println("connected");
-      //client.subscribe("esp32/output");
     }
     else {
       Serial.print("failed, rc=");
