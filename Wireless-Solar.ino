@@ -9,6 +9,8 @@
 #include <WiFiNINA.h>
 #include <DHT.h>
 #include <PubSubClient.h>
+#include <SAMDTimerInterrupt.h>
+#include <SAMD_ISR_Timer.h>
 
 // Credentials
 #define WIFISSID ""
@@ -21,8 +23,17 @@
 // Pins
 #define DHTPIN 14
 #define DHTTYPE DHT22
-const int sharpLEDPin = 19;   
-const int sharpVoPin = A6;  
+const int sharpLEDPin = 16;   
+const int sharpVoPin = A1;  
+
+// Timer setup
+#define HW_TIMER_INTERVAL_MS 10
+#define samplerate 50L
+SAMDTimer ITimer(TIMER_TC3);
+SAMD_ISR_Timer ISR_Timer;
+void TimerHandler(void){
+  ISR_Timer.run();
+}
 
 // Dust sensor setup
 #define USE_AVG
@@ -35,7 +46,9 @@ static float K = 0.5;
 static float Voc = 0.6;
 
 // Function prototypes 
-float getDust();
+void getTemp();
+void getHumid();
+void getDust();
 void mqttReconnect();
 void mqttPublish(char* topic, float payload);
 
@@ -50,11 +63,15 @@ PubSubClient client(wifi);
 
 DHT dht(DHTPIN, DHTTYPE);
 
+// Sensor Data Variables
+float temp, humid, dust;
+
 void setup() {
   pinMode(sharpLEDPin,OUTPUT);
   pinMode(sharpVoPin,INPUT);
   
   dht.begin();
+  
   Serial.begin(9600);
   while (!Serial);
 
@@ -78,26 +95,34 @@ void setup() {
     client.connect(MqttClient_Id, MqttClient_user, MqttClient_password);
   }
   Serial.println("successful.");
-}
 
-void loop() {
-  if (!client.connected()) {
-    mqttReconnect();
+  if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler))
+  {
+    Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
   }
-  delay(2000);
-  float temp = dht.readTemperature();
-  delay(300);
-  float humid = dht.readHumidity();
-  delay(300);
-  float dust = getDust();
-  client.loop();
-  mqttPublish(MqttTopic_Temperature, temp);
-  mqttPublish(MqttTopic_Humidity, humid);
-  mqttPublish(MqttTopic_Dust, dust);
-  
+  else
+    Serial.println(F("Can't set ITimer. Select another freq. or timer"));
+
+  // Timer interrupts
+  ISR_Timer.setInterval(samplerate*60, getTemp);
+  ISR_Timer.setInterval(samplerate*60, getHumid);
+  ISR_Timer.setInterval(samplerate*60, getDust);
+  ISR_Timer.setInterval(samplerate*80, mqttReconnect);
 }
 
-float getDust() {
+void loop() {}
+
+void getTemp() {
+  temp = dht.readTemperature();
+  mqttPublish(MqttTopic_Temperature, temp);
+}
+
+void getHumid() {
+  humid = dht.readHumidity();
+  mqttPublish(MqttTopic_Humidity, humid);
+}
+
+void getDust() {
   digitalWrite(sharpLEDPin, LOW);
   delayMicroseconds(280);
   int VoRaw = analogRead(sharpVoPin);
@@ -112,8 +137,8 @@ float getDust() {
     dV = 0;
     Voc = Vo;
   }
-  float dustDensity = dV / K * 100.0;
-  return dustDensity;
+  dust = dV / K * 100.0;
+  mqttPublish(MqttTopic_Dust, dust);
 }
 
 void mqttReconnect() {
