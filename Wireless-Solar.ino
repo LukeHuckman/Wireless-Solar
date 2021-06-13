@@ -107,10 +107,20 @@ void setup() {
   ISR_Timer.setInterval(samplerate*60, getTemp);
   ISR_Timer.setInterval(samplerate*60, getHumid);
   ISR_Timer.setInterval(samplerate*60, getDust);
+  ISR_Timer.setInterval(samplerate*80, wifiReconnect);
   ISR_Timer.setInterval(samplerate*80, mqttReconnect);
 }
 
 void loop() {}
+
+void wifiReconnect() {
+  while (status != WL_CONNECTED) {
+    Serial.print("WiFi disconnected. Reconnecting to ");
+    Serial.println(WIFISSID);
+    status = WiFi.begin(WIFISSID, WIFIPASS);
+    delay(5000);
+  }
+}
 
 void getTemp() {
   temp = dht.readTemperature();
