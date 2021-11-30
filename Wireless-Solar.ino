@@ -81,6 +81,7 @@ int status = WL_IDLE_STATUS;
 #define MqttTopic_Ppv "power/Node1/ppv"
 #define MqttTopic_Vbat "power/Node1/vbat"
 #define MqttTopic_LDR "power/Node1/ldr"
+#define MqttTopic_Relay "power/Node1/relay"
 #define MqttTopic_Humidity "environment/Node1/humidity"
 #define MqttTopic_Temperature "environment/Node1/temperature"
 #define MqttTopic_Dust "environment/Node1/dust"
@@ -194,7 +195,7 @@ void setup() {
   dht.setup(DHTPIN, DHTesp::DHTTYPE);
   
   Serial.begin(9600);
-  while (!Serial);
+  //while (!Serial);
 
   // Wifi connection for uploading sensor data to server
   while (status != WL_CONNECTED) {
@@ -303,7 +304,7 @@ void powerSystem() {
     while (TCC1->SYNCBUSY.bit.CCB1);
     // analogWrite(6, Dutycycle2);
     Dutycycle3 = LOW;
-    digitalWrite (3,Dutycycle3);  
+    digitalWrite (3,Dutycycle3);  // TODO Send status of D3
   }
   else { 
     Dutycycle = 0;
@@ -320,6 +321,7 @@ void powerSystem() {
   // Iprev = current;
   // delay (500);
   // delayMicroseconds(500); 
+  mqttPublish(MqttTopic_Relay, String(Dutycycle3));
 }
 /*
 void getTemp() {
