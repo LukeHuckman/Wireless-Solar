@@ -304,7 +304,7 @@ void powerSystem() {
     while (TCC1->SYNCBUSY.bit.CCB1);
     // analogWrite(6, Dutycycle2);
     Dutycycle3 = LOW;
-    digitalWrite (3,Dutycycle3);  // TODO Send status of D3
+    digitalWrite (3,Dutycycle3);
   }
   else { 
     Dutycycle = 0;
