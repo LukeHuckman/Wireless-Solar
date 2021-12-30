@@ -26,6 +26,8 @@
 #include <PubSubClient.h> // PubSubClient 2.8 (Nick O'Leary)
 #include <SAMDTimerInterrupt.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
 #include <SAMD_ISR_Timer.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
+#include <WiFiUdp.h>  // [internal library]
+#include <NTPClient.h> // NTPClient 3.2.0 (Arduino)
 
 // Credentials
 #define WIFISSID ""
@@ -74,6 +76,12 @@ void mqttPublish(char* topic, float payload);
 
 // WiFi Status
 int status = WL_IDLE_STATUS;
+int test;
+
+// NTP
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
+int hourOfDay;
 
 // MQTT Topics
 #define MqttTopic_Voltage "power/Node1/voltage"
@@ -180,7 +188,7 @@ void setup() {
   TCC1->PER.reg = 300;                            // Set the frequency of the PWM on TCC1 to 1kHz: 48MHz / (8 * 5999 + 1) = 1kHz
   while (TCC1->SYNCBUSY.bit.PER);                  // Wait for synchronization
   
-  TCC1->CC[1].reg = 150;                        // TCC1 CC0 - 50% duty cycle on D7
+  TCC1->CC[1].reg = 150;                        // TCC1 CC0 - 50% duty cycle on D4
   while (TCC1->SYNCBUSY.bit.CC1);                  // Wait for synchronization
   
   TCC1->CC[0].reg = 150;                          // TCC1 CC0 - 50% duty cycle on D7
@@ -208,7 +216,10 @@ void setup() {
   Serial.println("Wifi connected.");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
-
+  
+  // Start NTP client
+  timeClient.begin();
+  
   // Establish MQTT connection to server
   client.setServer(SERVER,1883);
   while (!client.connected()) {
@@ -216,7 +227,7 @@ void setup() {
     client.connect(MqttClient_Id, MqttClient_user, MqttClient_password);
   }
   Serial.println("successful.");
-
+  
   if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler))
   {
     Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
@@ -226,33 +237,59 @@ void setup() {
 
   // Timer interrupts
   //ISR_Timer.setInterval(samplerate*60, getTemp);
-  ISR_Timer.setInterval(samplerate*60, powerSystem);
+  ISR_Timer.setInterval(samplerate*2, powerSystem);
   ISR_Timer.setInterval(samplerate*60, getDHT);
   ISR_Timer.setInterval(samplerate*60, getDust);
   ISR_Timer.setInterval(samplerate*80, wifiReconnect);
   ISR_Timer.setInterval(samplerate*80, mqttReconnect);
+  ISR_Timer.setInterval(samplerate*20, updateTime);
 }
 
 void loop() {}
 
 void wifiReconnect() {
+  int retries = 1;
   while (status != WL_CONNECTED) {
     Serial.print("WiFi disconnected. Reconnecting to ");
     Serial.println(WIFISSID);
     status = WiFi.begin(WIFISSID, WIFIPASS);
-    delay(5000);
+    if(retries <= 10){
+      delay(5000);
+      retries++;
+    }
+    else {
+      delay(30000);
+    }
   }
+  retries = 1;
+}
+
+void updateTime() {
+  timeClient.update();
+  hourOfDay = timeClient.getFormattedTime().substring(0,2).toInt();
 }
 
 void getPowerStat() {
-  float vol = analogRead(A5) * (5.0 / 1024.0);
-  current = (15 * (vol - 2.5))-2.59;
+  current = 0;
+  for (int i = 0; i <= 20; i++) {
+    float vol = analogRead(A5) * (3.3 / 1024.0);
+    current = current + (15 * (vol - 2.5))/0.625;
+    delay(10);
+  }
+  current = current/20;
+  
   if (current < 0)
     current = 0;
 
-  voltage = analogRead(A3) * (5 / 1024.0);
+    voltage = 0;
+  for (int i = 0; i <= 20; i++) {
+    voltage = voltage+analogRead(A3) * (3.3 / 1024.0);
+    delay(10);
+  }
+  voltage = voltage /20;
+  
  
-  voltage = (voltage * 233/5)-1.5 ;
+  voltage = (voltage * 103.3/3.3) ;
   if (voltage <0)
     voltage=0;
     
@@ -269,8 +306,8 @@ void getLDR() {
 }
 
 void getVbat() {
-  Vbat = analogRead(A4) * (5 / 1024.0);
-  Vbat = (Vbat * 233/5) - 2.4;
+  Vbat = analogRead(A4) * (3.3 / 1024.0)-1.0;
+  Vbat = (Vbat * 103.3/3.3);
   mqttPublish(MqttTopic_Vbat, String(Vbat, 3));
 }
 
@@ -278,7 +315,12 @@ void powerSystem() {
   getPowerStat();
   getLDR();
   getVbat();
-  if (LDR > 200){
+  if (LDR > 550 && hourOfDay < 11 || hourOfDay >= 23){
+    if (test==0){
+      test=1;
+      Dutycycle = 150;
+    }
+  
     if ((Ppv > Pprev) && (voltage > Vprev)){
       if (Dutycycle > 20)
         Dutycycle -= 5;
@@ -300,18 +342,19 @@ void powerSystem() {
     while (TCC1->SYNCBUSY.bit.CCB0);  
     // analogWrite(9,500);
     Dutycycle2 = 150;
-    TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D7
+    TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
     while (TCC1->SYNCBUSY.bit.CCB1);
     // analogWrite(6, Dutycycle2);
     Dutycycle3 = LOW;
     digitalWrite (3,Dutycycle3);
   }
   else { 
+    test=0;
     Dutycycle = 0;
     TCC1->CCB[0].reg = Dutycycle;     // TCC1 CCB1 - 25% duty cycle on D7
     while (TCC1->SYNCBUSY.bit.CCB0);
     Dutycycle2 = 0;
-    TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D7
+    TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
     while (TCC1->SYNCBUSY.bit.CCB1);
     Dutycycle3 = HIGH;
     digitalWrite (3,Dutycycle3);
@@ -362,17 +405,24 @@ void getDust() {
 }
 
 void mqttReconnect() {
+  int retries = 1;
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Attempt to connect
     if (client.connect(MqttClient_Id, MqttClient_user, MqttClient_password)) {
       Serial.println("connected");
+      retries = 1;
     }
     else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      delay(5000);
+      if(retries <= 10){
+        delay(5000);
+        retries++;
+      }
+      else {
+        delay(30000);
+      }
     }
   }
 }
