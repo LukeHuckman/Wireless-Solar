@@ -63,20 +63,24 @@ static float K = 0.5;
 static float Voc = 0.6;
 
 // Function prototypes
-void getPowerStat();
-void getLDR();
-void getVbat();
-void powerSystem();
-void getDHT();
+void getPowerStat(void);
+void getLDR(void);
+void getVbat(void);
+void powerSystem(void);
+void getDHT(void);
 //void getTemp();
 //void getHumid();
-void getDust();
-void mqttReconnect();
+void getDust(void);
+void wifiReconnect(void);
+void mqttReconnect(void);
+void reconnect(void);
 void mqttPublish(char* topic, float payload);
+void updateTime(void);
 
 // WiFi Status
 int status = WL_IDLE_STATUS;
 int test;
+int test_count;
 
 // NTP
 WiFiUDP ntpUDP;
@@ -93,6 +97,7 @@ int hourOfDay;
 #define MqttTopic_Humidity "environment/Node1/humidity"
 #define MqttTopic_Temperature "environment/Node1/temperature"
 #define MqttTopic_Dust "environment/Node1/dust"
+#define MqttTopic_Debug "management/Node1/debug"
 
 // MQTT Initialisation
 WiFiClient wifi;
@@ -113,14 +118,14 @@ float
   Dutycycle = 150,
   Dutycycle2 = 150,
   dust;
+bool charging = false, batlow;
 int Dutycycle3;
 String temp, humid;
 
 void setup() {
   pinMode(3,OUTPUT);
-  // put your setup code here, to run once:
 
-   // Feed GCLK0 at 48MHz to TCC0 and TCC1
+  // Feed GCLK0 at 48MHz to TCC0 and TCC1
   GCLK->CLKCTRL.reg = GCLK_CLKCTRL_CLKEN |         // Enable GCLK0 as a clock source (1 << 14)
                       GCLK_CLKCTRL_GEN_GCLK0 |     // Select GCLK0 at 48MHz (0 << 8)
                       GCLK_CLKCTRL_ID_TCC0_TCC1;   // Route GCLK0 to TCC0 and TCC1 (0x1A << 0)
@@ -203,7 +208,6 @@ void setup() {
   dht.setup(DHTPIN, DHTesp::DHTTYPE);
   
   Serial.begin(9600);
-  //while (!Serial);
 
   // Wifi connection for uploading sensor data to server
   while (status != WL_CONNECTED) {
@@ -236,18 +240,21 @@ void setup() {
     Serial.println(F("Can't set ITimer. Select another freq. or timer"));
 
   // Timer interrupts
-  //ISR_Timer.setInterval(samplerate*60, getTemp);
   ISR_Timer.setInterval(samplerate*2, powerSystem);
-  ISR_Timer.setInterval(samplerate*60, getDHT);
-  ISR_Timer.setInterval(samplerate*60, getDust);
-  ISR_Timer.setInterval(samplerate*80, wifiReconnect);
-  ISR_Timer.setInterval(samplerate*80, mqttReconnect);
-  ISR_Timer.setInterval(samplerate*20, updateTime);
 }
+
+int counter = 1;
 
 void loop() {}
 
+void reconnect() {
+  wifiReconnect();
+  updateTime();
+  mqttReconnect();
+}
+
 void wifiReconnect() {
+  mqttPublish(MqttTopic_Debug, "wifiReconnect");
   int retries = 1;
   while (status != WL_CONNECTED) {
     Serial.print("WiFi disconnected. Reconnecting to ");
@@ -258,95 +265,131 @@ void wifiReconnect() {
       retries++;
     }
     else {
-      delay(30000);
+      break;
     }
   }
   retries = 1;
 }
 
 void updateTime() {
+  mqttPublish(MqttTopic_Debug, "updateTime");
   timeClient.update();
   hourOfDay = timeClient.getFormattedTime().substring(0,2).toInt();
 }
 
 void getPowerStat() {
+  mqttPublish(MqttTopic_Debug, "getPowerStat");
   current = 0;
+  mqttPublish(MqttTopic_Debug, "start_getPowerStat");
   for (int i = 0; i <= 20; i++) {
     float vol = analogRead(A5) * (3.3 / 1024.0);
     current = current + (15 * (vol - 2.5))/0.625;
-    delay(10);
   }
+  
   current = current/20;
   
   if (current < 0)
     current = 0;
-
     voltage = 0;
   for (int i = 0; i <= 20; i++) {
-    voltage = voltage+analogRead(A3) * (3.3 / 1024.0);
-    delay(10);
+    voltage += analogRead(A3) * (3.3 / 1024.0);
   }
-  voltage = voltage /20;
-  
- 
+  voltage /= 20;
   voltage = (voltage * 103.3/3.3) ;
   if (voltage <0)
     voltage=0;
-    
+
   Ppv = voltage * current;
-  
+
   mqttPublish(MqttTopic_Voltage, String(voltage, 3));
   mqttPublish(MqttTopic_Current, String(current, 3));
   mqttPublish(MqttTopic_Ppv, String(Ppv, 3));
 }
 
 void getLDR() {
+  mqttPublish(MqttTopic_Debug, "getLDR");
   LDR = analogRead(A6) * (1000/1024.0);
   mqttPublish(MqttTopic_LDR, String(LDR, 3));
 }
 
 void getVbat() {
-  Vbat = analogRead(A4) * (3.3 / 1024.0)-1.0;
+  mqttPublish(MqttTopic_Debug, "getVbat");
+  Vbat = 0;
+  for(int i = 0; i < 20; i++) {
+    Vbat += analogRead(A4) * (3.3 / 1024.0)+0.06;
+  }
+  Vbat /= 20;
   Vbat = (Vbat * 103.3/3.3);
   mqttPublish(MqttTopic_Vbat, String(Vbat, 3));
 }
 
 void powerSystem() {
+  counter++;
+  switch(counter){
+    case 50:
+      getDHT();
+      getDust();
+      test_count=1;
+      break;
+    case 100:
+      reconnect();
+      test_count=1;
+      break;
+  }
+  if(counter == 100)
+    counter = 1;
+  
+  mqttPublish(MqttTopic_Debug, "powerSystem");
   getPowerStat();
   getLDR();
   getVbat();
   if (LDR > 550 && hourOfDay < 11 || hourOfDay >= 23){
-    if (test==0){
-      test=1;
-      Dutycycle = 150;
+    if(!charging && Vbat < 15){
+      charging = true;
     }
-  
-    if ((Ppv > Pprev) && (voltage > Vprev)){
-      if (Dutycycle > 20)
-        Dutycycle -= 5;
+    else if(charging && Vbat >= 13) {
+      batlow = false;
     }
-    else if ((Ppv > Pprev) && (voltage < Vprev)){
-      if (Dutycycle < 280)
-        Dutycycle += 5;
+    else if(charging && Vbat >= 16){
+      charging = false;
     }
-    else if ((Ppv < Pprev) && (voltage > Vprev)){
-      if (Dutycycle > 20) 
-        Dutycycle -=  5;
+    
+    if(charging){
+      if (test==0){
+        test=1;
+        Dutycycle = 150;
+      }
+      if ((Ppv > Pprev) && (voltage > Vprev)){
+        if (Dutycycle > 20)
+           Dutycycle -= 5;
+      }
+      else if ((Ppv > Pprev) && (voltage < Vprev)){
+        if (Dutycycle < 280)
+          Dutycycle += 5;
+      }
+      else if ((Ppv < Pprev) && (voltage > Vprev)){
+        if (Dutycycle > 20) 
+          Dutycycle -=  5;
+      }
+      // if ((Ppv < Pprev) && (voltage < Vprev)){
+      else {
+        if (Dutycycle < 280)
+          Dutycycle +=  5;
+      }
+      TCC1->CCB[0].reg = Dutycycle;     // TCC1 CCB1 - 25% duty cycle on D7
+      while (TCC1->SYNCBUSY.bit.CCB0);  
+      // analogWrite(9,500);
+      Dutycycle2 = 150;
+      TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
+      while (TCC1->SYNCBUSY.bit.CCB1);
+      // analogWrite(6, Dutycycle2);
     }
-    // if ((Ppv < Pprev) && (voltage < Vprev)){
     else {
-      if (Dutycycle < 280)
-        Dutycycle +=  5;
+      TCC1->CCB[1].reg = 0;    // TCC1 CCB1 - 25% duty cycle on D4
+      while (TCC1->SYNCBUSY.bit.CCB1);
     }
-    TCC1->CCB[0].reg = Dutycycle;     // TCC1 CCB1 - 25% duty cycle on D7
-    while (TCC1->SYNCBUSY.bit.CCB0);  
-    // analogWrite(9,500);
-    Dutycycle2 = 150;
-    TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
-    while (TCC1->SYNCBUSY.bit.CCB1);
-    // analogWrite(6, Dutycycle2);
     Dutycycle3 = LOW;
-    digitalWrite (3,Dutycycle3);
+    digitalWrite (3,Dutycycle3);  // Turn off relay
   }
   else { 
     test=0;
@@ -356,28 +399,23 @@ void powerSystem() {
     Dutycycle2 = 0;
     TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
     while (TCC1->SYNCBUSY.bit.CCB1);
-    Dutycycle3 = HIGH;
-    digitalWrite (3,Dutycycle3);
+    if(Vbat >= 12 && !batlow) {
+      Dutycycle3 = HIGH;
+      digitalWrite (3,Dutycycle3);
+    }
+    else {
+      batlow = true;
+      Dutycycle3 = LOW;               // Battery voltage too low, turn off relay 
+      digitalWrite (3,Dutycycle3);
+    }
   }
   Pprev = Ppv;
   Vprev = voltage;
-  // Iprev = current;
-  // delay (500);
-  // delayMicroseconds(500); 
   mqttPublish(MqttTopic_Relay, String(Dutycycle3));
 }
-/*
-void getTemp() {
-  temp = dht.readTemperature();
-  mqttPublish(MqttTopic_Temperature, temp);
-}
 
-void getHumid() {
-  humid = dht.readHumidity();
-  mqttPublish(MqttTopic_Humidity, humid);
-}
-*/
 void getDHT() {
+  mqttPublish(MqttTopic_Debug, "getDHT");
   dhtdata = dht.getTempAndHumidity();
   temp = dhtdata.temperature;
   humid = dhtdata.humidity;
@@ -386,6 +424,7 @@ void getDHT() {
 }
 
 void getDust() {
+  mqttPublish(MqttTopic_Debug, "getDust");
   digitalWrite(sharpLEDPin, LOW);
   delayMicroseconds(280);
   int VoRaw = analogRead(sharpVoPin);
@@ -405,6 +444,7 @@ void getDust() {
 }
 
 void mqttReconnect() {
+  mqttPublish(MqttTopic_Debug, "mqttReconnect");
   int retries = 1;
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -421,7 +461,7 @@ void mqttReconnect() {
         retries++;
       }
       else {
-        delay(30000);
+        break;
       }
     }
   }
