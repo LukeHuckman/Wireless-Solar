@@ -21,10 +21,10 @@
 
 // Library Includes
 #include <SPI.h> // [internal library]
-#include <WiFiNINA.h> // WiFiNINA 1.8.7 (Arduino)
+#include <WiFiNINA.h> // WiFiNINA 1.8.13 (Arduino)
 #include <DHTesp.h> // DHT sensor library for ESPx 1.18 (beegee_tokyo)
 #include <PubSubClient.h> // PubSubClient 2.8 (Nick O'Leary)
-#include <SAMDTimerInterrupt.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
+#include <SAMDTimerInterrupt.h> // SAMD_TimerInterrupt 1.5.0 (Khoi Hoang)
 #include <SAMD_ISR_Timer.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
 #include <WiFiUdp.h>  // [internal library]
 #include <NTPClient.h> // NTPClient 3.2.0 (Arduino)
@@ -71,9 +71,9 @@ void getDHT(void);
 //void getTemp();
 //void getHumid();
 void getDust(void);
+void reconnect(void);
 void wifiReconnect(void);
 void mqttReconnect(void);
-void reconnect(void);
 void mqttPublish(char* topic, float payload);
 void updateTime(void);
 
@@ -120,7 +120,7 @@ float
   dust;
 bool charging = false, batlow;
 int Dutycycle3;
-String temp, humid;
+String temp, humid, netTime;
 
 void setup() {
   pinMode(3,OUTPUT);
@@ -223,6 +223,8 @@ void setup() {
   
   // Start NTP client
   timeClient.begin();
+  timeClient.update();
+  hourOfDay = timeClient.getFormattedTime().substring(0,2).toInt();
   
   // Establish MQTT connection to server
   client.setServer(SERVER,1883);
@@ -241,15 +243,21 @@ void setup() {
 
   // Timer interrupts
   ISR_Timer.setInterval(samplerate*2, powerSystem);
+  ISR_Timer.setInterval(samplerate*100, getDHT);
+  ISR_Timer.setInterval(samplerate*100, getDust);
+  ISR_Timer.setInterval(samplerate*600, reconnect);
+  //ISR_Timer.setInterval(samplerate*80, wifiReconnect);
+  //ISR_Timer.setInterval(samplerate*80, mqttReconnect);
+  ISR_Timer.setInterval(samplerate*20, updateTime);
 }
 
-int counter = 1;
+//int counter = 1;
 
 void loop() {}
 
 void reconnect() {
   wifiReconnect();
-  updateTime();
+  //updateTime();
   mqttReconnect();
 }
 
@@ -324,6 +332,8 @@ void getVbat() {
 }
 
 void powerSystem() {
+  //Serial.println(timeClient.getFormattedTime() + "\n" + hourOfDay);
+  /*
   counter++;
   switch(counter){
     case 50:
@@ -338,6 +348,7 @@ void powerSystem() {
   }
   if(counter == 100)
     counter = 1;
+  */
   
   mqttPublish(MqttTopic_Debug, "powerSystem");
   getPowerStat();
