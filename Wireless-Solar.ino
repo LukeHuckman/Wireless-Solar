@@ -22,10 +22,10 @@
 // Library Includes
 #include <SPI.h> // [internal library]
 #include <WiFiNINA.h> // WiFiNINA 1.8.13 (Arduino)
-#include <DHTesp.h> // DHT sensor library for ESPx 1.18 (beegee_tokyo)
+#include <DHT.h> // DHT sensor library 1.4.3 (Adafruit)
 #include <PubSubClient.h> // PubSubClient 2.8 (Nick O'Leary)
-#include <SAMDTimerInterrupt.h> // SAMD_TimerInterrupt 1.5.0 (Khoi Hoang)
-#include <SAMD_ISR_Timer.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
+//#include <SAMDTimerInterrupt.h> // SAMD_TimerInterrupt 1.5.0 (Khoi Hoang)
+//#include <SAMD_ISR_Timer.h> // SAMD_TimerInterrupt 1.4.0 (Khoi Hoang)
 #include <WiFiUdp.h>  // [internal library]
 #include <NTPClient.h> // NTPClient 3.2.0 (Arduino)
 
@@ -44,13 +44,13 @@ const int sharpLEDPin = 16;
 const int sharpVoPin = A1;  
 
 // Timer setup
-#define HW_TIMER_INTERVAL_MS 10
+/*#define HW_TIMER_INTERVAL_MS 10
 #define samplerate 50L
 SAMDTimer ITimer(TIMER_TC3);
 SAMD_ISR_Timer ISR_Timer;
 void TimerHandler(void){
   ISR_Timer.run();
-}
+}*/
 
 // Dust sensor setup
 #define USE_AVG
@@ -103,10 +103,11 @@ int hourOfDay;
 WiFiClient wifi;
 PubSubClient client(wifi);
 
-DHTesp dht;
+//DHTesp dht;
+DHT dht(DHTPIN, DHTTYPE);
 
 // Global Variables
-TempAndHumidity dhtdata;
+//TempAndHumidity dhtdata;
 float
   voltage,
   current,
@@ -117,10 +118,13 @@ float
   LDR,
   Dutycycle = 150,
   Dutycycle2 = 150,
+  temp,
+  humid,
   dust;
 bool charging = false, batlow;
 int Dutycycle3;
-String temp, humid, netTime;
+//String temp, humid, netTime;
+String netTime;
 
 void setup() {
   pinMode(3,OUTPUT);
@@ -205,7 +209,8 @@ void setup() {
   pinMode(sharpLEDPin,OUTPUT);
   pinMode(sharpVoPin,INPUT);
   
-  dht.setup(DHTPIN, DHTesp::DHTTYPE);
+  //dht.setup(DHTPIN, DHTesp::DHTTYPE);
+  dht.begin();
   
   Serial.begin(9600);
 
@@ -234,30 +239,39 @@ void setup() {
   }
   Serial.println("successful.");
   
-  if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler))
+  /*if (ITimer.attachInterruptInterval(HW_TIMER_INTERVAL_MS * 1000, TimerHandler))
   {
     Serial.print(F("Starting ITimer OK, millis() = ")); Serial.println(millis());
   }
   else
-    Serial.println(F("Can't set ITimer. Select another freq. or timer"));
+    Serial.println(F("Can't set ITimer. Select another freq. or timer"));*/
 
   // Timer interrupts
-  ISR_Timer.setInterval(samplerate*2, powerSystem);
-  ISR_Timer.setInterval(samplerate*100, getDHT);
-  ISR_Timer.setInterval(samplerate*100, getDust);
-  ISR_Timer.setInterval(samplerate*600, reconnect);
+  //ISR_Timer.setInterval(samplerate*2, powerSystem);
+  //ISR_Timer.setInterval(samplerate*10, statusLED);
+  //ISR_Timer.setInterval(samplerate*40, getDHT);
+  //ISR_Timer.setInterval(samplerate*40, getDust);
+  //ISR_Timer.setInterval(samplerate*600, reconnect);
   //ISR_Timer.setInterval(samplerate*80, wifiReconnect);
   //ISR_Timer.setInterval(samplerate*80, mqttReconnect);
-  ISR_Timer.setInterval(samplerate*20, updateTime);
+  //ISR_Timer.setInterval(samplerate*20, updateTime);
+  pinMode(13, OUTPUT);
 }
 
-//int counter = 1;
+int counter = 1;
 
-void loop() {}
+void loop() {
+  powerSystem();
+  delay(100);
+}
+
+void statusLED(){
+  digitalWrite(13, !digitalRead(13));
+}
 
 void reconnect() {
   wifiReconnect();
-  //updateTime();
+  updateTime();
   mqttReconnect();
 }
 
@@ -288,21 +302,21 @@ void updateTime() {
 void getPowerStat() {
   mqttPublish(MqttTopic_Debug, "getPowerStat");
   current = 0;
-  mqttPublish(MqttTopic_Debug, "start_getPowerStat");
-  for (int i = 0; i <= 20; i++) {
+  //mqttPublish(MqttTopic_Debug, "start_getPowerStat");
+  for (int i = 0; i <= 10; i++) {
     float vol = analogRead(A5) * (3.3 / 1024.0);
     current = current + (15 * (vol - 2.5))/0.625;
   }
   
-  current = current/20;
+  current = current/10;
   
   if (current < 0)
     current = 0;
     voltage = 0;
-  for (int i = 0; i <= 20; i++) {
+  for (int i = 0; i <= 10; i++) {
     voltage += analogRead(A3) * (3.3 / 1024.0);
   }
-  voltage /= 20;
+  voltage /= 10;
   voltage = (voltage * 103.3/3.3) ;
   if (voltage <0)
     voltage=0;
@@ -323,45 +337,49 @@ void getLDR() {
 void getVbat() {
   mqttPublish(MqttTopic_Debug, "getVbat");
   Vbat = 0;
-  for(int i = 0; i < 20; i++) {
+  for(int i = 0; i < 10; i++) {
     Vbat += analogRead(A4) * (3.3 / 1024.0)+0.06;
   }
-  Vbat /= 20;
+  Vbat /= 10;
   Vbat = (Vbat * 103.3/3.3);
   mqttPublish(MqttTopic_Vbat, String(Vbat, 3));
 }
 
 void powerSystem() {
   //Serial.println(timeClient.getFormattedTime() + "\n" + hourOfDay);
-  /*
+  
   counter++;
   switch(counter){
-    case 50:
+    case 20:
+    case 40:
+    case 60:
+    case 80:
       getDHT();
       getDust();
-      test_count=1;
+      statusLED();
       break;
     case 100:
+      getDHT();
+      getDust();
+      statusLED();
       reconnect();
-      test_count=1;
       break;
   }
   if(counter == 100)
     counter = 1;
-  */
   
   mqttPublish(MqttTopic_Debug, "powerSystem");
   getPowerStat();
   getLDR();
   getVbat();
-  if (LDR > 550 && hourOfDay < 11 || hourOfDay >= 23){
-    if(!charging && Vbat < 15){
+  if (LDR > 150 && (hourOfDay < 11 || hourOfDay >= 23)){
+    if(!charging && Vbat < 15.0){
       charging = true;
     }
-    else if(charging && Vbat >= 13) {
+    else if(charging && Vbat >= 13.0) {
       batlow = false;
     }
-    else if(charging && Vbat >= 16){
+    else if(charging && Vbat >= 16.0){
       charging = false;
     }
     
@@ -410,7 +428,7 @@ void powerSystem() {
     Dutycycle2 = 0;
     TCC1->CCB[1].reg = Dutycycle2;    // TCC1 CCB1 - 25% duty cycle on D4
     while (TCC1->SYNCBUSY.bit.CCB1);
-    if(Vbat >= 12 && !batlow) {
+    if(Vbat >= 12.0 && !batlow) {
       Dutycycle3 = HIGH;
       digitalWrite (3,Dutycycle3);
     }
@@ -427,11 +445,15 @@ void powerSystem() {
 
 void getDHT() {
   mqttPublish(MqttTopic_Debug, "getDHT");
-  dhtdata = dht.getTempAndHumidity();
-  temp = dhtdata.temperature;
-  humid = dhtdata.humidity;
-  mqttPublish(MqttTopic_Temperature, temp);
-  mqttPublish(MqttTopic_Humidity, humid);
+  //dhtdata = dht.getTempAndHumidity();
+  //temp = dhtdata.temperature;
+  //humid = dhtdata.humidity;
+  temp = dht.readTemperature();
+  humid = dht.readHumidity();
+  //mqttPublish(MqttTopic_Temperature, temp);
+  //mqttPublish(MqttTopic_Humidity, humid);
+  mqttPublish(MqttTopic_Temperature, String(temp, 5));
+  mqttPublish(MqttTopic_Humidity, String(humid, 5));
 }
 
 void getDust() {
