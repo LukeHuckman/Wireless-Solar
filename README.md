@@ -1,4 +1,4 @@
-# Wireless-Solar (WIP)
+# Wireless-Solar
 
 Final Year Project/Academic Project (WIA3002/WIA3003)
 
